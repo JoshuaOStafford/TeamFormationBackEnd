@@ -104,5 +104,14 @@ public class User {
         return !prefers_alone;
     }
 
+    double proposedTeamsRankAverage(int[] proposed_teammates){
+        double rawScore = 0;
+        for (int member : proposed_teammates){
+            if (member != rank)
+                rawScore += getPreferenceRank(member);
+        }
+        return rawScore / (proposed_teammates.length - 1);
+    }
+
 }
 
