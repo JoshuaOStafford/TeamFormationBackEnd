@@ -1,3 +1,4 @@
+import java.util.LinkedList;
 import java.util.Scanner;
 import java.util.Arrays;
 import java.util.ArrayList;
@@ -36,6 +37,9 @@ public class Main {
         int groupSize = setupArray[1];
         boolean runIS = (setupArray[2] == 1);
         String algorithm = getAlgorithmFromIndex(setupArray[3]);
+        // here is parameter for the heuristic of RPM
+        double lower=0.35;
+        double upper=1.0-lower;
 
         // ML stands for Master List, where all the user's ranks & preferences can be found with other helper methods
         User[] ML = new User[numOfUsers];
@@ -53,47 +57,86 @@ public class Main {
 
         // We Run Iterative Soulmates as a preliminary algorithm if it was selected on the site
         if (runIS)
-            iterativeSoulmatesExtended(ML, teams, groupSize);
+            iterativeSoulmates(ML, teams, groupSize);
 
         // Next we run the specified algorithm
         if (algorithm.equals("RandomSerialDictatorship"))
             randomSerialDictatorship(ML, teams, groupSize);
         else if (algorithm.equals("Heuristic"))
             heuristicApproach(ML, teams, groupSize, 0, 200);
-        else if (algorithm.equals("Sub-game Perfect Equilibrium"))
-            subGamePerfectEquilibrium(ML, teams, CMA);
+        else if (algorithm.equals("RotationalProposerMechanism"))
+            runRotationalProposerMechanism(ML, teams, lower, upper);
         printTeams(ML, teams);
     }
 
 
     /**
-     * Iterative Soulmates: this is a pre-processing algorithm that will form any teams of two in which the pair are
-     * the other's number one choice. If a user's first number one choice is already paired with their soul-mate, then
-     * their next choice will become their potential soul-mate
-     * @param ML - Array of user objects
-     * @param teams - Array list to store teams
+     * Method sets up the inputs to the AAM_SM_Heuristic class and runs the Rotational Proposer Mechanism
+     * Sets up the data to run Jian's algorithm
+     * @param ML - array of Users
+     * @param teams - ArrayList of all the teams (empty when passed in, filled when method finishes)
+     * @param lower - lower threshold to accept
+     * @param upper - upper threshold to accept
      */
-    private static void iterativeSoulmates(User[] ML, ArrayList<Team> teams) {
-        boolean match = false;
-        do {
-            for (int proposer = 0; (proposer < ML.length); ++proposer) {
-                if (proposer == ML.length - 1)
-                    match = false;
-                if (!ML[proposer].matched) {
-                    int topChoice = ML[proposer].getBestChoice(ML);
-                    if (topChoice != -1 && proposer == ML[topChoice].getBestChoice(ML)) {
-                        match = true;
-                        Team newTeam = new Team(teams.size() + 1);
-                        newTeam.addMember(ML[proposer]);
-                        newTeam.addMember(ML[topChoice]);
-                        teams.add(newTeam);
-                        ML[proposer].matched = true;
-                        ML[topChoice].matched = true;
-                        proposer = ML.length;   // makes the for loop start back at beginning after match is found
-                    }
-                }
+    private static void runRotationalProposerMechanism(User[] ML, ArrayList<Team> teams, double lower, double upper){
+        int n = ML.length; // n is number of players
+        int depth = ML.length; // set depth to number of players
+        LinkedList<Integer> order = new LinkedList<Integer>(); // linked list of the order in which players propose
+        for (User player : ML)
+            order.add(player.getRank());
+
+        // double ArrayList where value.get(i).get(j) is the utility of i if they are paired with j
+        ArrayList<ArrayList<Integer>> value = new ArrayList<ArrayList<Integer>>();
+
+        // ArrayList containing an LinkedList for each player, the LinkedList describes the ordering of the players preferences
+        ArrayList<LinkedList<Integer>> linked_value = new ArrayList<LinkedList<Integer>>();
+
+        // Offset for switch between zero-based indexing and one-based indexing
+        value.add(0, new ArrayList<Integer>());
+        linked_value.add(0, new LinkedList<Integer>());
+
+        // set-up linked_value and value Double Arrays
+        for(User player : ML) {
+
+            int rawUtility = player.preferences.length;
+            LinkedList<Integer> preferencesList = new LinkedList<Integer>();
+            ArrayList<Integer> utilityList = new ArrayList<Integer>(ML.length);
+            utilityList.add(0); // offset additional zero for switch to one-based indexing
+            for(User index : ML)
+                utilityList.add(0);
+
+            for (int index = 0; index < player.preferences.length; ++index) {
+                int desired_teammate = player.preferences[index]+1;
+                // add desired teammate to current players linked list of preferences
+                preferencesList.add(desired_teammate);
+
+                // store the utility of the current player if they match with current desired teammate
+                utilityList.set(desired_teammate, rawUtility);
+                --rawUtility; // linearly decrease the raw utility after each preference}
             }
-        } while (match);
+            linked_value.add(player.getRank()+1, preferencesList); // add preference list for player in
+            value.add(player.getRank()+1, utilityList);
+        }
+
+        // Run Jian's algorithm
+        AAM_SN_Heuristic TeamFormationHeuristic = new AAM_SN_Heuristic(n, depth, order, value, linked_value, lower, upper);
+
+        // the value at each index of the array is the teammate who the index player matched with. If the value is 0,
+        // the index player is a Singleton
+        ArrayList<Integer> array = TeamFormationHeuristic.ARM();
+
+        // form teams based off the algorithm
+        for (int index = 1; index < array.size(); ++index){
+            if (array.get(index) != 0 && !ML[index-1].matched){
+                int[] teammates = new int[2];
+                int currentPlayerUtility = array.get(index);
+                int partner = value.get(index).indexOf(currentPlayerUtility) - 1; // -1 to account for shift back to zero-based indexing
+                teammates[0] = index-1; // -1 to account for shift back to zero-based indexing
+                teammates[1] = partner;
+                formTeams(ML, teammates, teams);
+            }
+        }
+
     }
 
 
@@ -107,7 +150,7 @@ public class Main {
      * @param teams - Array list to store teams
      * @param groupSize - size that the groups must be (this number is n in Soulmates Criteria)
      */
-    private static void iterativeSoulmatesExtended(User[] ML, ArrayList<Team> teams, int groupSize) {
+    private static void iterativeSoulmates(User[] ML, ArrayList<Team> teams, int groupSize) {
         boolean matchFound;
         do {
             matchFound = false;
@@ -116,21 +159,9 @@ public class Main {
                 boolean teamFailedToForm = false;
                 if (!ML[proposer].matched) {
 
-                    int[] potential_members = new int[groupSize]; // store all the members of the
-                    int groupIndex = 1;
-                    potential_members[0] = proposer;
-
-                    boolean teamIsFilled = false;
-                    for (int index = 0; index < ML[proposer].preferences.length && !teamIsFilled; ++index) {
-                        int choice = ML[proposer].preferences[index];
-                        if (!ML[choice].matched && choice != ML[proposer].getRank()) {
-                            potential_members[groupIndex] = choice;
-                            ++groupIndex;
-                        }
-                        if (groupIndex == groupSize) {
-                            teamIsFilled = true;
-                        }
-                    }
+                    // method returns array of size zero if proposer couldn't fill team with remaining preferences.
+                    int[] potential_members = getProposersIdealRemainingTeam(ML, proposer, groupSize);
+                    boolean teamIsFilled = potential_members.length != 0;
 
                     // If the proposer had enough preferences to potentially form a team, we check if that team meets
                     // the Soulmates criteria
@@ -139,7 +170,7 @@ public class Main {
                         for (int member = 0; !teamFailedToForm && member < potential_members.length; ++member){
                             for (int potential_teammate = 0; !teamFailedToForm && potential_teammate < potential_members.length; ++potential_teammate){
                                 if (potential_members[member] != potential_members[potential_teammate]){
-                                    if (!ML[potential_members[member]].meetsSoulmateCriteria(potential_members[potential_teammate], groupSize, ML)) { // CHANGE THIS LINE TO CALL METHOD TO CHECK SOULMATES CRITERIA
+                                    if (!ML[potential_members[member]].meetsSoulmateCriteria(potential_members[potential_teammate], groupSize, ML)) {
                                         teamFailedToForm = true;
                                     }
                                 }
@@ -152,12 +183,7 @@ public class Main {
                     // If the team did not fail to form, a team of soulmates were found!
                     // Team is stored and we iterate again through all users to attempt to find another soulmates team
                     if (!teamFailedToForm){
-                        Team newTeam = new Team(teams.size() + 1);
-                        for (int members_index : potential_members) {
-                            newTeam.addMember(ML[members_index]);
-                            ML[members_index].matched = true;
-                        }
-                        teams.add(newTeam);
+                        teams = formTeams(ML, potential_members, teams);
                         matchFound = true;
                         proposer = ML.length; // start back at the beginning and search again for soulmates
                     }
@@ -170,114 +196,6 @@ public class Main {
 
 
     /**
-     * Sub Game Perfect Equilibrium - The teams that would be formed if everyone knew everything
-     * @param ML - Master List of Users
-     * @param teams - currently formed teams
-     * @param CMA - Current Match Array
-     */
-    private static void subGamePerfectEquilibrium(User[] ML, ArrayList<Team> teams, int[] CMA){
-        int x = ML.length - 1;
-        boolean[] iterativeSoulmatesMatches = new boolean[ML.length];
-        for (int index = 0; index < ML.length; ++index)
-            iterativeSoulmatesMatches[index] = ML[index].matched;
-        while (x >= 0){
-            for (int index = 0; index < ML.length; ++index)
-                ML[index].matched = iterativeSoulmatesMatches[index];
-            CMA = findTeamsIfXGoesFirst(ML, CMA, x);
-            --x;
-        }
-        teams = formTeamsForSGPE(ML, teams, CMA);
-    }
-
-
-    /**
-     * Finds the optimal teams for each sub-game of the overall game. Forms the teams if each user before X was rejected
-     * by all that they offered to.
-     * @param ML - Array of Users
-     * @param CMA - represents each user's current best option
-     * @param starter - user that goes first in the sub-game because all others before them were rejected
-     * @return - New array of users' current best options
-     */
-    private static int[] findTeamsIfXGoesFirst(User[] ML, int[] CMA, int starter){
-        for (int currentUser = starter; currentUser < ML.length; ++currentUser) {
-            User proposer = ML[currentUser];
-            boolean satisfied = false;
-            for (int index = 0; index < proposer.preferences.length && !satisfied; ++index) {
-                int choice = proposer.preferences[index];
-                int proposerRank = ML[choice].getPreferenceRank(currentUser);
-                if (((proposerRank < ML[choice].getPreferenceRank(CMA[choice])) ||
-                        canStealShouldSettle(ML, CMA, currentUser, choice)) && !ML[choice].matched) {
-                    // update CMA
-                    int oldMatchOfUser = CMA[currentUser];
-                    int oldMatchOfChoice = CMA[choice];
-                    CMA[oldMatchOfChoice] = oldMatchOfChoice;
-                    CMA[oldMatchOfUser] = oldMatchOfUser;
-                    CMA[choice] = currentUser;
-                    CMA[currentUser] = choice;
-                    ML[currentUser].matched = true;
-                    ML[choice].matched = true;
-                    satisfied = true;
-                } else if (proposerRank == ML[choice].getPreferenceRank(CMA[choice]))
-                    satisfied = true;
-            }
-        }
-        return CMA;
-    }
-
-
-    /**
-     * can steal, should settle - special helper method to detect a potential situation where a user's utility will
-     * be lower in the long run if they do not accept an offer that at the moment seems worse than their current state
-     * @param ML - array of users
-     * @param CMA - current best matches of users
-     * @param proposer - the user proposing who seems worse than the choice's current best option
-     * @param choice - the choice who needs to decide whether to accept or reject the proposer
-     * @return - the decision whether to accept or reject the offer based on if the proposer will later steal the
-     *           choice's current match if the choice rejects
-     */
-    private static boolean canStealShouldSettle(User[] ML, int[] CMA, int proposer, int choice){
-        int currentChoice = ML[proposer].getPreferenceRank(choice);
-        boolean accept = false;
-        for (int choiceCount = currentChoice + 1; choiceCount < ML[proposer].preferences.length; ++choiceCount){
-            int newChoice = ML[proposer].preferences[choiceCount];
-            if (ML[newChoice].getPreferenceRank(CMA[newChoice]) >= ML[newChoice].getPreferenceRank(proposer))
-                accept = true;
-            if (accept && newChoice == CMA[choice]){
-                return true;
-            } else if (accept && newChoice != CMA[choice])
-                return false;
-        }
-        return false;
-    }
-
-
-    /**
-     * Helper method to form teams after the SGPE algorithm is run by using the CMA list
-     * @param ML - array of user objects
-     * @param teams - the teams stored in an array list
-     * @param CMA - current match array
-     * @return - the teams
-     */
-    private static ArrayList<Team> formTeamsForSGPE(User[] ML, ArrayList<Team> teams, int[] CMA){
-        for (int currentUser = 0; currentUser < CMA.length; ++currentUser){
-            if (CMA[currentUser] != -1){
-                int choice = CMA[currentUser];
-                if (currentUser != choice) {
-                    Team newTeam = new Team(teams.size() + 1);
-                    newTeam.addMember(ML[currentUser]);
-                    newTeam.addMember(ML[choice]);
-                    CMA[choice] = -1;
-                    ML[currentUser].matched = true;
-                    ML[choice].matched = true;
-                    teams.add(newTeam);
-                }
-            }
-        }
-        return teams;
-    }
-
-
-    /**
      * Heuristic Approach to forming teams. The users take turns proposing teams and the offer is accepted by user X if
      * the average preference rank of the other users on the team is better than the average preference ranking of all
      * of user X's remaining preferences.
@@ -286,34 +204,41 @@ public class Main {
      * @param groupSize - size of the groups
      * @param theta - floating number that changes the likeliness of a user to accept or reject the team. IF theta is
      *              positive, the user is more likely to accept an offer. If theta is negative, they are less likely.
-     * @param rounds - the number of rounds of offers that are made. This is the way we stop the algorithm from being
+     * @param maxRounds - the number of rounds of offers that are made. This is the way we stop the algorithm from being
      *               an infinite loop
      */
-    private static void heuristicApproach(User[] ML, ArrayList<Team> teams, int groupSize, double theta, int rounds) {
-        int count = 0;
-        while (!allUsersMatched(ML) && count < rounds) {
+    private static void heuristicApproach(User[] ML, ArrayList<Team> teams, int groupSize, double theta, int maxRounds){
+        int currentRound = 0;
+        while (!allUsersMatched(ML) && currentRound < maxRounds){
             boolean finished = false;
-            for (int proposer = 0; proposer < ML.length && !finished; ++proposer) {
-                int choice = ML[proposer].getBestChoiceRequired(ML);
-                if (choice != -1 && !ML[proposer].matched) {
-                    double leftoverRankAverage = ML[choice].getAveragePreferenceRank(ML, theta);
-                    int proposerRank = ML[choice].getPreferenceRank(proposer);
-                    boolean accept = leftoverRankAverage > proposerRank - theta;
-                    if (accept) {
-                        Team newTeam = new Team(teams.size() + 1);
-                        newTeam.addMember(ML[proposer]);
-                        newTeam.addMember(ML[choice]);
-                        teams.add(newTeam);
-                        ML[proposer].matched = true;
-                        ML[choice].matched = true;
-                        if (allUsersMatched(ML))
-                            finished = true;
+            ++currentRound;
+            for (int proposer = 0; proposer < ML.length && !finished; ++proposer){
+                if (!ML[proposer].matched){
+                    int[] potential_members = getProposersIdealRemainingTeam(ML, proposer, groupSize);
+                    if (potential_members.length != 0 && teamWantsToForm(ML, potential_members, theta)){
+                        teams = formTeams(ML, potential_members, teams);
+                        finished = allUsersMatched(ML);
+                        proposer = ML.length;
                     }
                 }
             }
-            ++count;
         }
+    }
 
+
+    private static boolean teamWantsToForm(User[] ML, int[] potential_members, double theta){
+
+        // proposer is 0 so no need to check if they want to be on team
+        for (int member = 1; member < potential_members.length; ++member) {
+            double remainingAvgRank = ML[member].getAveragePreferenceRank(ML, theta);
+            double groupAvgRank = ML[member].proposedTeamsRankAverage(potential_members);
+
+            // 
+            boolean didntLikeTeam = remainingAvgRank + theta < groupAvgRank;
+            if (didntLikeTeam)
+                return false;
+        }
+        return true;
     }
 
 
@@ -343,6 +268,39 @@ public class Main {
                 }
             }
         }
+    }
+
+
+    private static ArrayList<Team> formTeams(User[] ML, int[] teammates, ArrayList<Team> teams){
+        Team newTeam = new Team(teams.size() + 1);
+        for (int member : teammates){
+            newTeam.addMember(ML[member]);
+            ML[member].matched = true;
+        }
+        teams.add(newTeam);
+        return teams;
+    }
+
+
+    private static int[] getProposersIdealRemainingTeam(User[] ML, int proposer, int groupSize){
+        boolean teamIsFilled = false;
+        int[] potential_members = new int[groupSize];
+        potential_members[0] = proposer;
+        int currGroupSize = 1;
+        for (int index = 0; index < ML[proposer].preferences.length && !teamIsFilled; ++index) {
+            int choice = ML[proposer].preferences[index];
+            if (!ML[choice].matched && choice != ML[proposer].getRank()) {
+                potential_members[currGroupSize] = choice;
+                ++currGroupSize;
+            }
+            if (currGroupSize == groupSize) {
+                teamIsFilled = true;
+            }
+        }
+        if (teamIsFilled)
+            return potential_members;
+        else
+            return new int[0];
     }
 
 
@@ -396,7 +354,6 @@ public class Main {
                 prefArrayRaw[index] = prefScanner.nextInt();
                 ++index;
             }
-            prefArrayRaw[index] = rank;
             int count = 0;
             while (count != ML.length && prefArrayRaw[count] != -1) {
                 count++;
@@ -427,6 +384,7 @@ public class Main {
         }
     }
 
+
     /**
      * Method takes the index of which algorithm to run from Python code and gets the proper name for readability
      * @param index - from python code
@@ -438,7 +396,7 @@ public class Main {
         if (index == 1)
             return "Heuristic";
         if (index == 2)
-            return "Sub-game Perfect Equilibrium";
+            return "RotationalProposerMechanism";
         return "none";
     }
 
