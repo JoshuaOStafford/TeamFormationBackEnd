@@ -1,13 +1,20 @@
 # TeamFormationBackEnd
-Java code for Team Formation Platform. Main.java reads in the setup data and stores user preferences in an array of User objects. Main then acts as a driver determining which algorithms to run based off the setup data.
+<b>Java code for Team Formation Platform.</b>
+
+<ul>
+<li>Python code running on the backend of the Team Formation Platform provides Main.java with the setup data to store all the users and their partner preferences for forming teams.</li>
+<li>Main.java executes the chosen team formation algorithm and writes the results to the console.</li>
+<li>Console is read by the Python code and stored in the site's database.</li>
+</ul>
 
 <b><u>Algorithms Currently Offered</u></b>
 <ul>
-<li>Iterative Soulmates</li>
+<li>Iterative Soulmates*</li>
 <li>Random Serial Dictatorship</li>
 <li>Heuristic Approach</li>
 <li>Rotational Proposer Mechanism</li>
 </ul>
+* - (pre-processing algorithm, normally used along with one of the algorithms below)
 <h2>Iterative Soulmates</h2>
 <p>This preprocessing algorithm will find any groups of members of a specified size that meet the Soulmates Criteria</p>
 <p><b>Soulmates Criteria:</b>A team of <i>n</i> users is meets the soulmates criteria iff each member of the team considers every other member to be in their top <i>n-1</i> available choices.</p>
